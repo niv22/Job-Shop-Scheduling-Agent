@@ -181,7 +181,7 @@ def _render_sidebar() -> None:
         f'</div>'
         f'{machine_cards}'
         f'<hr class="sp-hr">'
-        f'<div class="sidebar-title">Jobs</div>'
+        f'<div class="sidebar-title">Jobs Data</div>'
         f'{job_rows}',
         unsafe_allow_html=True,
     )

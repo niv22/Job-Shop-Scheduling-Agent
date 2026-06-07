@@ -9,9 +9,10 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+from groq import BadRequestError as GroqBadRequestError
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
@@ -154,6 +155,9 @@ def _report_to_markdown(report: str) -> str:
 
         if section == "Schedule Summary":
             schedule_lines.append(line)
+        elif section not in ("Schedule Summary", "Schedule Metrics"):
+            out.append(stripped)
+            out.append("")
         elif section == "Schedule Metrics":
             if stripped == "Machine utilization:":
                 sub_section = "utilization"
@@ -195,18 +199,35 @@ def run_scheduler() -> str:
         return "Scheduler already ran this turn. Ask the user before running it again."
     _scheduler_called = True
     jobs_data = _open_jobs_data()
-    jssp = JSSP(jobs_data)
-    result = jssp.run()
-    if jssp.run_id:
-        _last_run_id = jssp.run_id
-        path = f"outputs/{jssp.run_id}.txt"
-        if os.path.exists(path):
-            with open(path) as f:
-                return _report_to_markdown(f.read())
-        status = "dispalyed report"
-    else:
-        status = "could not fetch scheduling report"
-    return status
+    offline_machines = [
+        m["id"] for m in jobs_data.get("machines", []) if m.get("status") != "online"
+    ]
+    all_jobs = jobs_data.get("jobs", [])
+    dropped_jobs = [
+        j["name"] for j in all_jobs
+        if any(op["machine_id"] in set(offline_machines) for op in j["operations"])
+    ]
+    schedulable = [j for j in all_jobs if j["name"] not in dropped_jobs]
+    if not schedulable:
+        msg = "Cannot run scheduler: no schedulable jobs remain."
+        if offline_machines:
+            msg += f" Offline machine(s): {sorted(offline_machines)}."
+        if dropped_jobs:
+            msg += f" All jobs dropped: {dropped_jobs}."
+        msg += " Bring at least one machine back online or add jobs that use only online machines."
+        return msg
+    try:
+        jssp = JSSP(jobs_data)
+        result = jssp.run()
+        if offline_machines or dropped_jobs:
+            result += "\n=== Note ===\n"
+            if offline_machines:
+                result += f"**Offline machines:** {', '.join(f'Machine {m}' for m in sorted(offline_machines))}\n"
+            if dropped_jobs:
+                result += f"**Dropped jobs** (require offline machine): {', '.join(dropped_jobs)}\n"
+        return _report_to_markdown(result)
+    except ValueError as exc:
+        return f"Scheduler error: {exc}"
 
 
 @tool
@@ -277,15 +298,21 @@ class State(TypedDict):
 
 
 def _find_scheduler_report(messages: list) -> str | None:
+    # Scope to messages since the last HumanMessage so we don't surface stale reports.
+    last_human_idx = max(
+        (i for i, m in enumerate(messages) if getattr(m, "type", None) == "human"),
+        default=0,
+    )
+    recent = messages[last_human_idx:]
     scheduler_call_ids: set[str] = set()
-    for msg in messages:
+    for msg in recent:
         if hasattr(msg, "tool_calls"):
             for tc in msg.tool_calls:
                 if tc["name"] == "run_scheduler":
                     scheduler_call_ids.add(tc["id"])
     if not scheduler_call_ids:
         return None
-    for msg in messages:
+    for msg in recent:
         if getattr(msg, "type", None) == "tool" and getattr(msg, "tool_call_id", None) in scheduler_call_ids:
             return msg.content
     return None
@@ -295,8 +322,17 @@ def call_llm(state: State) -> State:
     global _scheduler_called
     if state["messages"][-1].type == "human":
         _scheduler_called = False
-    response = _llm.invoke(state["messages"])
-    if not response.tool_calls:
+    msgs = state["messages"]
+    try:
+        response = _llm.invoke(msgs)
+    except GroqBadRequestError as exc:
+        if getattr(exc, "status_code", None) == 400:
+            return {"messages": [AIMessage(content="I had trouble forming a valid tool call. Could you rephrase your request with more specific details?")]}
+        raise
+    # Append the scheduler report to the final response (no tool calls) when the
+    # scheduler ran this turn. The tool result is only available after ToolNode
+    # executes, so we append here rather than when the tool call is first emitted.
+    if not (hasattr(response, "tool_calls") and response.tool_calls):
         report = _find_scheduler_report(state["messages"])
         if report:
             response = response.model_copy(update={"content": response.content + "\n\n---\n\n" + report})
