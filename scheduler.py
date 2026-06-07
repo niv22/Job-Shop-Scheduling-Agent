@@ -5,9 +5,11 @@ import os
 from datetime import datetime
 from ortools.sat.python import cp_model
 
+from scheduler_infeasibility_analysis import InfeasibilityAnalysisMixin
+
 logger = logging.getLogger(__name__)
 
-class JSSP():
+class JSSP(InfeasibilityAnalysisMixin):
     def __init__(self, jobs_data):
         self.task_type = collections.namedtuple("task_type", "start end interval")
         self.assigned_task_type = collections.namedtuple(
@@ -213,36 +215,30 @@ class JSSP():
         status_name = solver.status_name(status)
         logger.info("Solver finished: status=%s, objective=%s", status_name, int(solver.objective_value) if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) else "N/A")
         return solver, status
+    
+    def save_output_report(self, output_str):
+        os.makedirs("outputs", exist_ok=True)
+        output_path = f"outputs/{self.run_id}.txt"
+        with open(output_path, "w") as f:
+            f.write(output_str)
+        logger.info("Output report saved to %s", output_path)
 
     def run(self):
         solver, status = self.solve()
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-            
+            logger.info("Solution found: objective=%s", int(solver.objective_value))
             header = f"Run ID : {self.run_id}\nDate   : {self.run_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             machine_to_tasks = self.get_machine_to_tasks(solver)
             output = header + self.format_summary(machine_to_tasks) + "\n" + self.format_metrics(solver)
-            os.makedirs("outputs", exist_ok=True)
-            output_path = f"outputs/{self.run_id}.txt"
-            with open(output_path, "w") as f:
-                f.write(output)
-            logger.info("Output saved to %s", output_path)
-            print(f"Output saved to {output_path}")
         else:
             logger.warning("No solution found (status=%s)", solver.status_name(status))
-            print("No solution found.")
-            if self.has_deadlines:
-                tight = [
-                    f"  {job['name']}: deadline={job['deadline']}, min_completion={sum(op['processing_time'] for op in job['operations'])}"
-                    for job in self.jobs
-                    if "deadline" in job
-                ]
-                print("Deadline constraints present — check feasibility:")
-                print("\n".join(tight))
-            machine_to_tasks = {}
+            # Infeasible (or otherwise unsolved): run the analysis and write a markdown report.
+            output = self.diagnose_infeasibility()
 
-        return self.format_summary(machine_to_tasks)
+        self.save_output_report(output)
 
+        return output
 
 if __name__ == "__main__":
     import json
@@ -250,4 +246,3 @@ if __name__ == "__main__":
     jobs_data = json.load(open("data/jobs.json"))
     jssp = JSSP(jobs_data)
     output = jssp.run()
-    print(output)

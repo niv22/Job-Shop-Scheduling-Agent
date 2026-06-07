@@ -44,7 +44,7 @@
           "processing_time": 2
         }
       ],
-      "deadline": 6
+      "deadline": 11
     },
     {
       "id": 1,
@@ -89,6 +89,7 @@
     {
       "id": 3,
       "name": "Job3",
+      "deadline": 10,
       "operations": [
         {
           "machine_id": 0,
@@ -111,6 +112,7 @@
     {
       "id": 4,
       "name": "Job4",
+      "deadline": 22,
       "operations": [
         {
           "machine_id": 3,

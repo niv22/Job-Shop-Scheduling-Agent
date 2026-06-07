@@ -279,10 +279,9 @@ _SYSTEM = SystemMessage(content=(
     "- Add, update, or remove job deadlines\n\n"
 
     "## Rules\n"
-    "- After running the scheduler, display the output report and give a two line summary highlighting: which jobs will miss their deadline (if any) "
-    "and which machines are bottlenecks.\n"
-    "- If the scheduler returns no solution, diagnose the root cause from the report in plain language "
-    "(e.g. impossible deadlines, machine overload), and suggest a concrete fix.\n"
+    "- After running the scheduler, display the output report from tool along with a concise  point-wise summary highlighting: which jobs will miss their deadline (if any) "
+    "and any other significant and relevant information.\n"
+    "- If the scheduler returns no solution, diagnose the root cause from the report and suggest a concrete fix.\n"
     "- After any configuration change (machine status, priority, deadline), ask the user whether to re-run the scheduler "
     "before doing so.\n"
     "- Never chain multiple tool calls in a single turn without user input, except when handling a what-if question "
@@ -292,6 +291,12 @@ _SYSTEM = SystemMessage(content=(
     "- Speak in business terms: completion times, deadline risk, resource utilisation.\n"
     "- Lead with the answer; add supporting detail only if it matters.\n"
     "- Be concise."
+
+    "## Output Format for Scheduler tool\n"
+    "- When using scheduler tool, return the following format:\n"
+    "  - A two summary of the scheduling report\n"
+    "  - Any significant and relevant information listed point-wise, max 3 points\n"
+    "  - The full scheduler report\n"
 ))
 
 
@@ -299,11 +304,31 @@ class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 
+def _find_scheduler_report(messages: list) -> str | None:
+    scheduler_call_ids: set[str] = set()
+    for msg in messages:
+        if hasattr(msg, "tool_calls"):
+            for tc in msg.tool_calls:
+                if tc["name"] == "run_scheduler":
+                    scheduler_call_ids.add(tc["id"])
+    if not scheduler_call_ids:
+        return None
+    for msg in messages:
+        if getattr(msg, "type", None) == "tool" and getattr(msg, "tool_call_id", None) in scheduler_call_ids:
+            return msg.content
+    return None
+
+
 def call_llm(state: State) -> State:
     global _scheduler_called
     if state["messages"][-1].type == "human":
         _scheduler_called = False
-    return {"messages": [_llm.invoke(state["messages"])]}
+    response = _llm.invoke(state["messages"])
+    if not response.tool_calls:
+        report = _find_scheduler_report(state["messages"])
+        if report:
+            response = response.model_copy(update={"content": response.content + "\n\n---\n\n" + report})
+    return {"messages": [response]}
 
 
 graph = StateGraph(State)
