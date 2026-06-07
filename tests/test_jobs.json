@@ -1,0 +1,89 @@
+{
+    "test_no_machine_overlap": {
+        "jobs": [
+            {
+                "id": 0,
+                "name": "Job0",
+                "operations": [
+                    {"machine_id": 0, "processing_time": 3},
+                    {"machine_id": 1, "processing_time": 2},
+                    {"machine_id": 2, "processing_time": 1}
+                ]
+            },
+            {
+                "id": 1,
+                "name": "Job1",
+                "operations": [
+                    {"machine_id": 2, "processing_time": 4},
+                    {"machine_id": 0, "processing_time": 2},
+                    {"machine_id": 1, "processing_time": 1}
+                ]
+            },
+            {
+                "id": 2,
+                "name": "Job2",
+                "operations": [
+                    {"machine_id": 1, "processing_time": 3},
+                    {"machine_id": 2, "processing_time": 2},
+                    {"machine_id": 0, "processing_time": 2}
+                ]
+            }
+        ]
+    },
+    "test_no_preemption": {
+        "jobs": [
+            {
+                "id": 0,
+                "name": "Job0",
+                "operations": [
+                    {"machine_id": 0, "processing_time": 1},
+                    {"machine_id": 1, "processing_time": 4}
+                ]
+            },
+            {
+                "id": 1,
+                "name": "Job1",
+                "operations": [
+                    {"machine_id": 1, "processing_time": 2},
+                    {"machine_id": 0, "processing_time": 3}
+                ]
+            },
+            {
+                "id": 2,
+                "name": "Job2",
+                "operations": [
+                    {"machine_id": 0, "processing_time": 5},
+                    {"machine_id": 1, "processing_time": 1}
+                ]
+            },
+            {
+                "id": 3,
+                "name": "Job3",
+                "operations": [
+                    {"machine_id": 1, "processing_time": 3},
+                    {"machine_id": 0, "processing_time": 2}
+                ]
+            }
+        ]
+    },
+    "test_makespan_minimisation": {
+        "jobs": [
+            {
+                "id": 0,
+                "name": "Job0",
+                "operations": [
+                    {"machine_id": 0, "processing_time": 2},
+                    {"machine_id": 1, "processing_time": 3}
+                ]
+            },
+            {
+                "id": 1,
+                "name": "Job1",
+                "operations": [
+                    {"machine_id": 1, "processing_time": 2},
+                    {"machine_id": 0, "processing_time": 1}
+                ]
+            }
+        ]
+    }
+}

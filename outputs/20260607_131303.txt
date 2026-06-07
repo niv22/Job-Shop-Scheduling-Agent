@@ -1,0 +1,34 @@
+Run ID : 20260607_131303
+Date   : 2026-06-07 13:13:03
+
+=== Schedule Summary ===
+  Machine 0:  Job0 Op0(3)  →  Job3 Op0(2)  →  Job4 Op1(4)  →  Job5 Op2(3)  →  Job1 Op1(2)  →  Job7 Op0(5)  →  Job6 Op3(2)  →  Job8 Op2(2)  →  Job9 Op3(3)
+  Machine 1:  Job5 Op0(2)  →  Job0 Op1(2)  →  Job2 Op1(3)  →  Job1 Op0(4)  →  Job3 Op3(1)  →  Job6 Op2(3)  →  Job7 Op1(1)  →  Job8 Op3(2)  →  Job9 Op4(4)
+  Machine 2:  Job2 Op0(5)  →  Job3 Op1(3)  →  Job0 Op2(4)  →  Job4 Op2(2)  →  Job6 Op1(2)  →  Job8 Op0(3)  →  Job9 Op1(3)
+  Machine 3:  Job4 Op0(3)  →  Job5 Op1(5)  →  Job3 Op2(4)  →  Job0 Op3(2)  →  Job1 Op2(3)  →  Job9 Op0(2)  →  Job7 Op2(2)
+  Machine 4:  Job6 Op0(4)  →  Job2 Op2(2)  →  Job4 Op3(3)  →  Job1 Op3(1)  →  Job8 Op1(4)  →  Job9 Op2(1)
+
+=== Schedule Metrics ===
+Makespan       : 32
+Optimality gap : 0.0%
+Status         : OPTIMAL
+
+Machine utilization:
+  Machine 0: 26/32 (81.2%)
+  Machine 1: 22/32 (68.8%)
+  Machine 2: 22/32 (68.8%)
+  Machine 3: 21/32 (65.6%)
+  Machine 4: 15/32 (46.9%)
+  Overall      : 66.2%
+
+Job completion times:
+  Job0: completion=14, processing=11, wait=3, priority=3
+  Job1: completion=18, processing=10, wait=8
+  Job2: completion=10, processing=10, wait=0
+  Job3: completion=13, processing=10, wait=3, priority=3
+  Job4: completion=17, processing=12, wait=5
+  Job5: completion=12, processing=10, wait=2
+  Job6: completion=21, processing=11, wait=10
+  Job7: completion=22, processing=8, wait=14
+  Job8: completion=27, processing=11, wait=16
+  Job9: completion=32, processing=13, wait=19
