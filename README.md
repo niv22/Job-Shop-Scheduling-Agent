@@ -67,6 +67,71 @@ uv run python scheduler.py
 
 ---
 
+## Agent design
+
+The agent is a [LangGraph](https://github.com/langchain-ai/langgraph) ReAct loop backed by `llama-3.3-70b-versatile` via Groq.
+
+**Graph structure** — Two nodes (`agent` → `tools`) connected by a conditional edge. After every LLM response, `tools_condition` checks whether the model emitted tool calls; if so it routes to `ToolNode`, which executes all calls and returns results. Control then returns to `agent`, repeating until the model produces a plain-text reply.
+
+```
+[user input]
+     │
+     ▼
+  agent  ──(has tool calls?)──► tools
+     ▲                              │
+     └──────────────────────────────┘
+     (plain text response → user)
+```
+
+**Tools** — Five LangChain `@tool` functions, each with a focused scope:
+
+| Tool | What it does |
+|------|-------------|
+| `run_scheduler` | Invokes the CP-SAT solver and returns the formatted report |
+| `update_machine_status` | Marks a machine `online` or `offline` in `jobs.json` |
+| `handle_priority` | Sets or removes the numeric priority on a job |
+| `handle_deadline` | Sets or removes the hard deadline on a job |
+| `get_latest_scheduler_report` | Re-fetches the most recent report without re-solving |
+
+**System prompt** — A `SystemMessage` is prepended to every conversation and instructs the model to speak in business terms (completion times, deadline risk, utilisation), lead with the answer, and diagnose infeasibility in plain language rather than surfacing solver internals.
+
+**Scheduler re-run guard** — A module-level `_scheduler_called` flag is reset to `False` on each new human message and set to `True` the first time `run_scheduler` fires. If the tool is called a second time in the same turn it returns an early-exit string instead of solving again. This prevents the solver from running redundantly during multi-step tool chains.
+
+**What-if exception** — The system prompt explicitly allows the agent to chain `update_*` + `run_scheduler` in a single turn when the user frames the request as a hypothetical ("what if machine 2 goes offline?"). In all other cases the agent asks for confirmation before re-solving.
+
+**State** — A single `TypedDict` field `messages: list` accumulates the full conversation history via LangGraph's `add_messages` reducer, giving the model complete context across turns.
+
+**Observability** — Every session gets a UUID and is traced end-to-end via Langfuse, tagged `jssp` and `cli` (or `streamlit` from the UI). If the Langfuse keys are absent the callback silently no-ops.
+
+---
+
+## Infeasibility analysis
+
+When the CP-SAT solver returns no solution, the agent triggers a diagnostic pass implemented in `scheduler_infeasibility_analysis.py` via the `InfeasibilityAnalysisMixin` class.
+
+**Technique** — The diagnostic re-solves a copy of the model with no objective, guarding each deadline with an *assumption literal* (a boolean variable the solver can flip). After the solve, `sufficient_assumptions_for_infeasibility()` returns a minimal conflicting subset of those literals — i.e. the smallest group of deadlines that provably cannot all be met at the same time. (Method from google/or-tools#973.)
+
+**Why deadlines, not precedence/no-overlap?** Precedence and machine no-overlap constraints can always be satisfied by serialising all tasks within the planning horizon — they can never alone cause infeasibility. Deadlines are therefore the only constraint family the diagnostic needs to investigate.
+
+**Report sections**
+
+| Section | What it shows |
+|---------|--------------|
+| **Verdict** | One of: deadlines conflict, deadlines are satisfiable (timeout suspected), inconclusive (diagnostic timed out), or no deadlines present |
+| **Conflicting deadlines** | The minimal infeasible set — relaxing any one deadline in this list is usually sufficient to restore feasibility |
+| **Per-job deadline feasibility** | Table comparing each job's deadline against its own minimum completion time (sum of its operation processing times); flags jobs that are individually impossible |
+| **Machine overload** | Earliest-deadline-first machine load test — flags any machine whose cumulative work due by a given deadline exceeds the available time |
+| **Recommended fixes** | Concrete suggestions: which deadlines to raise, by how much, and which machines are bottlenecks |
+
+**Possible verdicts**
+
+- `infeasible` — deadlines are the confirmed cause; the conflicting set is shown.
+- `deadlines_ok` — deadlines are jointly satisfiable, meaning the original failure was likely a solver timeout rather than true infeasibility.
+- `inconclusive` — the diagnostic itself timed out (30 s limit); increase `max_time_in_seconds` or `num_workers`.
+- `no_deadlines` — infeasibility with no deadline constraints present is unexpected; indicates malformed input data (e.g. zero or negative processing times).
+
+---
+
 ## Design decisions
 
 **Dual objective** — When priorities are present the model minimizes weighted completion time (priority × completion). Without priorities it minimizes makespan. This keeps the default experience simple while supporting advanced use cases.
