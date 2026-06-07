@@ -2,7 +2,7 @@ import json
 import uuid
 
 import streamlit as st
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent import app, _SYSTEM, langfuse_handler
 
@@ -190,35 +190,65 @@ def _render_sidebar() -> None:
 with st.sidebar:
     _render_sidebar()
 
+t1,t2 = st.tabs(["Chat with Agent", "Settings"])
 
-# ---------- Chat ----------
-for msg in st.session_state.chat_history:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+with t1:
+    # ---------- Chat ----------
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-if prompt := st.chat_input("Ask the scheduling agent…"):
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state.chat_history.append({"role": "user", "content": prompt})
-    st.session_state.agent_messages.append(HumanMessage(content=prompt))
+    if prompt := st.chat_input("Ask the scheduling agent…"):
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        st.session_state.agent_messages.append(HumanMessage(content=prompt))
 
-    config = {
-        "recursion_limit": 10,
-        "callbacks": [langfuse_handler],
-        "metadata": {
-            "langfuse_session_id": st.session_state.session_id,
-            "langfuse_tags": ["jssp", "streamlit"],
-        },
-    }
+        config = {
+            "recursion_limit": 10,
+            "callbacks": [langfuse_handler],
+            "metadata": {
+                "langfuse_session_id": st.session_state.session_id,
+                "langfuse_tags": ["jssp", "streamlit"],
+            },
+        }
 
-    state = {"messages": st.session_state.agent_messages}
-    with st.chat_message("assistant"):
-        with st.spinner("Working…"):
-            for step in app.stream(state, config=config, stream_mode="values"):
-                state = step
-        reply = state["messages"][-1].content
-        st.markdown(reply)
+        state = {"messages": st.session_state.agent_messages}
+        with st.chat_message("assistant"):
+            with st.spinner("Working…"):
+                for step in app.stream(state, config=config, stream_mode="values"):
+                    state = step
+            reply = state["messages"][-1].content
+            st.markdown(reply)
 
-    st.session_state.agent_messages = state["messages"]
-    st.session_state.chat_history.append({"role": "assistant", "content": reply})
-    st.rerun()
+        st.session_state.agent_messages = state["messages"]
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+        st.rerun()
+
+with t2:
+    # #Enter groq api key
+    # st.markdown("Enter your Groq API key to enable the scheduling agent to run optimisation tasks. You can obtain an API key from the [Groq Developer Portal](https://developer.groq.com/).")
+    # api_key = st.text_input("Groq API Key", type="password")
+    # if api_key:
+    #     st.success("API key saved!")
+    #     st.session_state.api_key = api_key
+    # else:
+    #     st.warning("Please enter your API key to enable scheduling features.")
+
+    #edit system prompt
+    st.markdown("### Edit System Prompt")
+    #open system from from system_prompt.txt, allow user to edit and save it back
+    with open("system_prompt.txt") as f:
+        system_prompt = f.read()
+    edited_prompt = st.text_area("System Prompt", value=system_prompt, height=300)
+    if st.button("Save System Prompt"):
+        with open("system_prompt.txt", "w") as f:
+            f.write(edited_prompt)
+        new_system = SystemMessage(content=edited_prompt)
+        msgs = st.session_state.agent_messages
+        if msgs and hasattr(msgs[0], "type") and msgs[0].type == "system":
+            st.session_state.agent_messages = [new_system] + msgs[1:]
+        else:
+            st.session_state.agent_messages = [new_system] + msgs
+        st.success("System prompt saved and applied to current session!")
+        
