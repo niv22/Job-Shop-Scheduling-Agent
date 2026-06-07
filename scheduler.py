@@ -32,6 +32,10 @@ class JSSP():
                 [j["name"] for j in dropped],
             )
         self.jobs = [j for j in all_jobs if j not in dropped]
+        if not self.jobs:
+            raise ValueError(
+                "No schedulable jobs remain — all jobs were dropped due to offline machines or the job list is empty."
+            )
         self.machines_count = 1 + max(
             op["machine_id"] for job in self.jobs for op in job["operations"]
         )

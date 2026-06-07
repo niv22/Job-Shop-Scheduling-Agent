@@ -34,7 +34,7 @@ def _save_jobs_data() -> None:
     with open("data/jobs.json", "w") as f:
         json.dump(_jobs_data, f, indent=2)
 
-def _open_jobs_data() -> None:
+def _open_jobs_data() -> dict:
     with open("data/jobs.json") as f:
         jobs_data = json.load(f)
     return jobs_data
@@ -194,7 +194,8 @@ def run_scheduler() -> str:
     if _scheduler_called:
         return "Scheduler already ran this turn. Ask the user before running it again."
     _scheduler_called = True
-    jssp = JSSP(_jobs_data)
+    jobs_data = _open_jobs_data()
+    jssp = JSSP(jobs_data)
     result = jssp.run()
     if jssp.run_id:
         _last_run_id = jssp.run_id
@@ -269,25 +270,28 @@ _llm = ChatGroq(model="llama-3.3-70b-versatile").bind_tools(_tools)
 
 _SYSTEM = SystemMessage(content=(
     "You are a scheduling assistant for a project manager. "
-    "Your job is to understand the user's intent and perform the related task from your capabilities.\n\n"
-    "Available actions:\n"
-    "- Run the scheduler to get the current schedule\n"
-    "- Mark machines online or offline (e.g. when one goes down for maintenance)\n"
+    "Understand the user's intent and act using your available tools.\n\n"
+
+    "## Capabilities\n"
+    "- Run the job-shop scheduler and display the report\n"
+    "- Mark machines online or offline\n"
     "- Set or adjust job priorities (higher number = higher priority)\n"
-    "- Set or remove deadlines on jobs\n"
-    "Instructions"
-    "- Do not run tools sequentially on your own without getting user's input"
-    "- After any configuration change, ask the user if the schedule needs to be calculated"
-    "- Explain why scheduling failed when no solution is found\n\n"
-    "How to respond:\n"
-    "- After running the scheduler, always call out: which jobs will miss their deadline (if any), "
-    "and which machines are the bottlenecks.\n"
-    "- When the user asks a what-if question (e.g. 'what if Machine 2 goes offline?'), "
-    "apply the change, run the scheduler, and summarise the impact — don't just describe what you did.\n"
-    "- When the scheduler returns no solution, immediately pull the latest report, examine the logs and report "
-    "the root cause in plain language (impossible deadlines, machine overload, etc.) and suggest a fix.\n"
-    "- Speak in business terms: completion times, deadline risk, resource conflicts. "
-    "- Be concise. Lead with the answer, follow with supporting detail only if it matters."
+    "- Add, update, or remove job deadlines\n\n"
+
+    "## Rules\n"
+    "- After running the scheduler, display the output report and give a two line summary highlighting: which jobs will miss their deadline (if any) "
+    "and which machines are bottlenecks.\n"
+    "- If the scheduler returns no solution, diagnose the root cause from the report in plain language "
+    "(e.g. impossible deadlines, machine overload), and suggest a concrete fix.\n"
+    "- After any configuration change (machine status, priority, deadline), ask the user whether to re-run the scheduler "
+    "before doing so.\n"
+    "- Never chain multiple tool calls in a single turn without user input, except when handling a what-if question "
+    "(apply the change, run the scheduler, report the impact — all in one turn).\n\n"
+
+    "## Response style\n"
+    "- Speak in business terms: completion times, deadline risk, resource utilisation.\n"
+    "- Lead with the answer; add supporting detail only if it matters.\n"
+    "- Be concise."
 ))
 
 

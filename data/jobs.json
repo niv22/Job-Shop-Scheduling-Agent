@@ -84,13 +84,11 @@
           "machine_id": 4,
           "processing_time": 2
         }
-      ],
-      "priority": 1
+      ]
     },
     {
       "id": 3,
       "name": "Job3",
-      "priority": 1,
       "operations": [
         {
           "machine_id": 0,
