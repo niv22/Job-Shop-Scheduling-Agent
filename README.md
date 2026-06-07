@@ -55,6 +55,44 @@ uv run python scheduler.py
 `data/jobs.json` contains a synthetic dataset of 10 jobs across 5 machines (IDs 0–4), randomly structured to exercise a range of scheduling scenarios — varying operation counts (3–5 ops per job), different machine orderings per job, and a mix of machine statuses (online/offline). Job 0 is pre-configured with a priority and a tight deadline to demonstrate those features out of the box. All other jobs have no priority or deadline set by default.
 
 
+## CP-SAT model
+
+### Variables
+
+For every `(job, operation)` pair the model creates three variables:
+
+| Variable | Domain | Purpose |
+|----------|--------|---------|
+| `start_{job}_{op}` | `[0, horizon]` | Time step at which the operation begins |
+| `end_{job}_{op}` | `[0, horizon]` | Time step at which the operation finishes |
+| `interval_{job}_{op}` | derived | Interval variable linking start, fixed duration, and end — used in no-overlap constraints |
+
+`horizon` is the sum of all processing times across every schedulable operation, giving a tight (but always valid) upper bound on when any task can finish. When no priorities are present an additional scalar variable `makespan` is added as the minimisation target.
+
+### Constraints
+
+1. **No-overlap** — for each machine, all interval variables assigned to it are passed to `add_no_overlap`. The solver guarantees that no two operations share a machine at the same time.
+2. **Precedence** — within each job, `start[op+1] >= end[op]` is enforced for every consecutive pair of operations, ensuring the strict ordering of a job's tasks.
+3. **Deadlines (hard)** — when a job carries a deadline, `end[last_op] <= deadline` is added as a hard constraint. A single violated deadline makes the whole problem infeasible.
+
+### Pre-solve feasibility checks
+
+Before handing the model to the solver, two lightweight checks emit warnings (and feed the infeasibility analysis if needed):
+
+- **Job-level check** — if a job's deadline is less than the sum of its own processing times it can never be met regardless of scheduling order.
+- **Machine-level EDF check** — for each machine and each deadline value `d`, the total processing time of all jobs with `deadline <= d` that use that machine must not exceed `d`. This catches contention-induced infeasibility that the job-level check misses.
+
+### Objective
+
+| Mode | Objective |
+|------|-----------|
+| No priorities set | Minimize `makespan` — the finish time of the last operation across all jobs |
+| Any job has a priority | Minimize `Σ priority(job) × end[last_op]` — weighted sum of completion times; higher-priority jobs are penalised more for finishing late |
+
+The solver runs with a 30-second wall-clock limit and a single worker (`num_workers = 1`). It reports `OPTIMAL` when the objective value equals the best bound, and `FEASIBLE` otherwise (along with the optimality gap in the output report).
+
+---
+
 ## Assumptions
 
 - **Time is unitless.** Processing times and deadlines are integers in whatever unit the user defines (minutes, hours, etc.).
