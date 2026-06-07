@@ -126,3 +126,7 @@ When the CP-SAT solver returns no solution, the agent triggers a diagnostic pass
 **Jobs data mutated on disk** — Persisting changes to `data/jobs.json` means the UI sidebar always reflects the current state without extra synchronization logic. The tradeoff is that changes are permanent until manually reverted.
 
 **Langfuse tracing** — Every session is tagged and traced via Langfuse for observability. The handler is instantiated at import time; if keys are missing the calls silently fail.
+
+**Minimal system prompt** — The agent runs on a small LLM (Groq-hosted Llama), so the system prompt is kept short and directive: it names the tools, states the re-run guard rule, and gives the what-if exception. Verbose prose or redundant examples would consume context that the model needs for reasoning and tend to cause instruction-following failures in smaller models.
+
+**Structured tool output** — Each tool returns a clearly formatted string (section headers, labelled fields) rather than raw JSON or unformatted text. This gives the LLM a predictable surface to cite in its reply and produces readable output in the Streamlit UI without additional post-processing.
