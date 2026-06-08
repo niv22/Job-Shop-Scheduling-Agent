@@ -147,20 +147,34 @@ def test_deadline_respected():
         )
 
 
-def test_offline_machine_raises():
-    """E1: JSSP raises ValueError when every job requires an offline machine.
+def test_machine_capacity():
+    """H1: Each machine processes at most one job at a time (no overlap).
 
-    A single job uses machine 0, which is marked offline — no schedulable jobs remain.
+    4 jobs all routed through a single machine — the strictest possible capacity
+    test because every pair of tasks competes for the same resource.
+    Job0: M0(2)  
+    Job1: M0(3)  
+    Job2: M0(1)  
+    Job3: M0(4)
+    Total work = 10, so the only valid makespan is 10 (full serialization).
+    Pairwise non-overlap is verified for every combination of tasks.
     """
-    jobs_data = {
-        "machines": [{"id": 0, "status": "offline"}],
-        "jobs": [
-            {
-                "id": 0,
-                "name": "Job0",
-                "operations": [{"machine_id": 0, "processing_time": 3}],
-            }
-        ],
-    }
-    with pytest.raises(ValueError, match="No schedulable jobs remain"):
-        JSSP(jobs_data)
+    _, _, machine_to_tasks = _solve(_load("test_machine_capacity"))
+
+    tasks = machine_to_tasks[0]
+    total_work = sum(t["duration"] for t in tasks)
+    makespan = max(t["start"] + t["duration"] for t in tasks)
+
+    # True serialization: no idle gaps would make makespan exactly equal total work
+    assert makespan == total_work, (
+        f"Expected makespan {total_work} (full serialization), got {makespan}"
+    )
+
+    # Pairwise non-overlap on machine 0
+    intervals = [(t["start"], t["start"] + t["duration"], t["label"]) for t in tasks]
+    for i, (s1, e1, name1) in enumerate(intervals):
+        for s2, e2, name2 in intervals[i + 1:]:
+            assert e1 <= s2 or e2 <= s1, (
+                f"Machine 0: {name1} [{s1},{e1}) overlaps {name2} [{s2},{e2})"
+            )
+

@@ -138,5 +138,13 @@
                 ]
             }
         ]
+    },
+    "test_machine_capacity": {
+        "jobs": [
+            {"id": 0, "name": "Job0", "operations": [{"machine_id": 0, "processing_time": 2}]},
+            {"id": 1, "name": "Job1", "operations": [{"machine_id": 0, "processing_time": 3}]},
+            {"id": 2, "name": "Job2", "operations": [{"machine_id": 0, "processing_time": 1}]},
+            {"id": 3, "name": "Job3", "operations": [{"machine_id": 0, "processing_time": 4}]}
+        ]
     }
 }

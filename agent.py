@@ -156,7 +156,12 @@ def _report_to_markdown(report: str) -> str:
         if section == "Schedule Summary":
             schedule_lines.append(line)
         elif section not in ("Schedule Summary", "Schedule Metrics"):
-            out.append(stripped)
+            if stripped.startswith("#"):
+                level = len(stripped) - len(stripped.lstrip("#"))
+                text = stripped.lstrip("# ").strip()
+                out.append("#" * (level + 2) + " " + text)
+            else:
+                out.append(stripped)
             out.append("")
         elif section == "Schedule Metrics":
             if stripped == "Machine utilization:":

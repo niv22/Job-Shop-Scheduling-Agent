@@ -117,7 +117,7 @@ st.markdown("""
 # ---------- Header ----------
 st.markdown(
     '<div class="header-band">'
-    '<h1>Job Shop Scheduling Agent</h1>'
+    '<h1> 🕐 Job Shop Scheduling Agent</h1>'
     '<p>AI-powered assistant for managing machines, configuring job priorities &amp; deadlines, and running optimised production schedules.</p>'
     '</div>',
     unsafe_allow_html=True,
@@ -131,6 +131,19 @@ if "session_id" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# ---------- Description ----------
+#add a section highlighting the key features of the app, with emojis and styled text
+st.markdown("""
+<div style="background: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+    <p style="color: #f1f5f9; margin-top: 0;">What all you can do with the agent</p>
+    <ul style="color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;">
+        <li><strong> Interactive Scheduling:</strong> Interact with the CP-SAT solver in natural language via a LangGraph ReAct agent.</li>
+        <li><strong> Machine Control:</strong> Toggle machine availability on or off and re-solve instantly, including what-if scenarios.</li>
+        <li><strong> Priority & Deadline Management:</strong> Set numeric job priorities (weighted completion time) and hard deadlines enforced by the solver.</li>
+        <li><strong> Infeasibility Analysis:</strong> When no solution exists, the agent identifies the minimal conflicting set of deadlines causing the failure.</li>
+    </ul>
+</div>
+""", unsafe_allow_html=True)
 
 # ---------- Sidebar ----------
 def load_jobs() -> dict:
