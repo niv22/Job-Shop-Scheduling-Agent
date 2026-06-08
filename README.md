@@ -37,6 +37,9 @@ This project is an AI-powered job-shop scheduling assistant. A project manager c
 - **Streamlit** — browser-based chat UI.
 - **Langfuse** — end-to-end observability and tracing for every agent session.
 
+<img width="1434" height="804" alt="image" src="https://github.com/user-attachments/assets/64d70026-792a-4380-940b-badf464c3d76" />
+
+
 ---
 
 ## 2. Assumptions
