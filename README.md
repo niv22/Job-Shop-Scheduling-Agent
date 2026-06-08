@@ -1,63 +1,94 @@
 # Job Shop Scheduling Agent
 
-An AI-powered scheduling assistant that lets a project manager interact with a job-shop scheduler in plain language. It uses Google OR-Tools CP-SAT to find optimal or near-optimal schedules, and a LangGraph ReAct agent with tools to run the scheduler, toggle machine availability, and set job priorities and deadlines.
+## Contents
+
+1. [Project Description](#1-project-description)
+2. [Assumptions](#2-assumptions)
+3. [Design Decisions](#3-design-decisions)
+4. [On Scheduling](#4-on-scheduling)
+   - [4.1 On Data](#41-on-data)
+   - [4.2 The CP-SAT Solver](#42-the-cp-sat-solver)
+   - [4.3 Infeasibility Analysis](#43-infeasibility-analysis)
+   - [4.4 Code](#44-code)
+5. [On the JSSP Agent](#5-on-the-jssp-agent)
+   - [5.1 Agent Design](#51-agent-design)
+   - [5.2 Agent Code](#52-agent-code)
+6. [Set Up & Execution](#6-set-up--execution)
+   - [6.1 Prerequisites](#61-prerequisites)
+   - [6.2 Set Up](#62-set-up)
 
 ---
 
-## Setup
+## 1. Project Description
 
-**Prerequisites:** Python 3.12+, [uv](https://github.com/astral-sh/uv)
+This project is an AI-powered job-shop scheduling assistant. A project manager can interact with a CP-SAT scheduler entirely in plain language — asking it to run a schedule, take a machine offline, raise a job's priority, or set a deadline — without touching any configuration files directly.
 
-```bash
-uv sync
-```
+**What you can do:**
+- Run the scheduler and get a formatted report of the optimal (or best-found) schedule.
+- Toggle machines online or offline and immediately see how the schedule changes.
+- Assign numeric priorities to jobs so the solver penalises high-priority jobs for finishing late.
+- Set hard deadlines on jobs and get a clear explanation when they make the problem infeasible.
+- Ask "what-if" questions ("what happens if machine 2 goes offline?") and have the agent update the data and re-solve in a single turn.
 
-Create a `.env` file with:
-
-```
-GROQ_API_KEY=...
-LANGFUSE_PUBLIC_KEY=...
-LANGFUSE_SECRET_KEY=...
-LANGFUSE_HOST=...        # e.g. https://cloud.langfuse.com
-```
-
-**Run the Streamlit UI:**
-
-```bash
-uv run streamlit run ui.py
-```
-
-**Run as CLI:**
-
-```bash
-uv run python agent.py
-```
-
-**Run the scheduler directly (no agent):**
-
-```bash
-uv run python scheduler.py
-```
+**Underlying technology:**
+- **Google OR-Tools CP-SAT** — constraint-programming solver that finds optimal or near-optimal schedules.
+- **LangGraph ReAct agent** — orchestrates tool calls in a think → act → observe loop.
+- **Groq-hosted Llama** — the LLM powering the agent (fast inference, small context footprint).
+- **Streamlit** — browser-based chat UI with a live sidebar showing machine and job state.
+- **Langfuse** — end-to-end observability and tracing for every agent session.
 
 ---
 
-## How it works
+## 2. Assumptions
 
-- **`data/jobs.json`** — the source of truth for jobs, operations, machine statuses, priorities, and deadlines. The agent modifies this file in place when you ask it to change something.
-- **`scheduler.py`** — builds and solves the CP-SAT model, writes a timestamped report to `outputs/`.
-- **`agent.py`** — LangGraph ReAct agent with five tools: `run_scheduler`, `update_machine_status`, `handle_priority`, `handle_deadline`, `get_latest_scheduler_report`.
-- **`ui.py`** — Streamlit chat UI with a sidebar showing live machine status and jobs data.
+- **Time is unitless.** Processing times and deadlines are integers in whatever unit the user defines (minutes, hours, etc.).
+- **Operations are strictly ordered** within a job; a job's next operation cannot start before the previous one finishes.
+- **Each machine handles one operation at a time** (no parallel machines).
+- **Offline machines drop their jobs.** Any job that requires an offline machine is excluded from the current solve rather than queued.
+- **Priorities are additive weights**, not hard ordering constraints. A higher priority number causes the solver to minimise that job's weighted completion time more aggressively.
+- **Deadlines are hard constraints.** If a deadline makes the problem infeasible, the solver returns no solution. The agent will explain why.
+- **The scheduler runs once per user turn.** A guard flag prevents re-running without explicit user confirmation.
 
 ---
 
-## Data
+## 3. Design Decisions
 
-`data/jobs.json` contains a synthetic dataset of 10 jobs across 5 machines (IDs 0–4), randomly structured to exercise a range of scheduling scenarios — varying operation counts (3–5 ops per job), different machine orderings per job, and a mix of machine statuses (online/offline). Job 0 is pre-configured with a priority and a tight deadline to demonstrate those features out of the box. All other jobs have no priority or deadline set by default.
+**Dual objective** — When priorities are present the model minimises weighted completion time (priority × completion). Without priorities it minimises makespan. This keeps the default experience simple while supporting advanced use cases.
 
+**Agent guards scheduler re-runs** — Calling the solver on every tool call would be expensive and confusing. The agent is instructed to ask before re-running after a configuration change, and a flag enforces this within a single turn.
 
-## CP-SAT model
+**Jobs data mutated on disk** — Persisting changes to `data/jobs.json` means the UI sidebar always reflects the current state without extra synchronisation logic. The tradeoff is that changes are permanent until manually reverted.
 
-### Variables
+**Minimal system prompt** — The agent runs on a small LLM (Groq-hosted Llama), so the system prompt is kept short and directive: it names the tools, states the re-run guard rule, and gives the what-if exception. Verbose prose or redundant examples consume context the model needs for reasoning and tend to cause instruction-following failures in smaller models.
+
+**Structured tool output** — Each tool returns a clearly formatted string (section headers, labelled fields) rather than raw JSON or unformatted text. This gives the LLM a predictable surface to cite in its reply and produces readable output in the Streamlit UI without additional post-processing.
+
+**Langfuse tracing** — Every session is tagged and traced via Langfuse for observability. The handler is instantiated at import time; if keys are missing the calls silently fail.
+
+---
+
+## 4. On Scheduling
+
+### 4.1 On Data
+
+The scheduler reads from `data/jobs.json`, which is the single source of truth for all scheduling inputs. It contains:
+
+- **Jobs** — each job has an ordered list of operations, a machine assignment per operation, and a processing time per operation.
+- **Machine statuses** — each machine is either `online` or `offline`. Offline machines cause any job requiring them to be dropped from the current solve.
+- **Priorities** — optional integer weights. When set, the solver switches from makespan minimisation to weighted completion time minimisation.
+- **Deadlines** — optional hard upper bounds on when a job's last operation must finish.
+
+The bundled dataset is a synthetic set of 10 jobs across 5 machines (IDs 0–4), randomly structured to exercise a range of scheduling scenarios — varying operation counts (3–5 ops per job), different machine orderings per job, and a mix of machine statuses. Job 0 is pre-configured with a priority and a tight deadline to demonstrate those features out of the box.
+
+The agent modifies `data/jobs.json` in place when you ask it to change machine status, priorities, or deadlines.
+
+---
+
+### 4.2 The CP-SAT Solver
+
+The scheduler is built on [Google OR-Tools CP-SAT](https://developers.google.com/optimization/reference/python/sat/python/cp_model), a constraint-programming solver over integer variables.
+
+#### Variables
 
 For every `(job, operation)` pair the model creates three variables:
 
@@ -69,43 +100,76 @@ For every `(job, operation)` pair the model creates three variables:
 
 `horizon` is the sum of all processing times across every schedulable operation, giving a tight (but always valid) upper bound on when any task can finish. When no priorities are present an additional scalar variable `makespan` is added as the minimisation target.
 
-### Constraints
+#### Constraints
 
 1. **No-overlap** — for each machine, all interval variables assigned to it are passed to `add_no_overlap`. The solver guarantees that no two operations share a machine at the same time.
 2. **Precedence** — within each job, `start[op+1] >= end[op]` is enforced for every consecutive pair of operations, ensuring the strict ordering of a job's tasks.
 3. **Deadlines (hard)** — when a job carries a deadline, `end[last_op] <= deadline` is added as a hard constraint. A single violated deadline makes the whole problem infeasible.
 
-### Pre-solve feasibility checks
+#### Objective
+
+| Mode | Objective |
+|------|-----------|
+| No priorities set | Minimise `makespan` — the finish time of the last operation across all jobs |
+| Any job has a priority | Minimise `Σ priority(job) × end[last_op]` — weighted sum of completion times; higher-priority jobs are penalised more for finishing late |
+
+The solver runs with a 30-second wall-clock limit and a single worker (`num_workers = 1`). It reports `OPTIMAL` when the objective value equals the best bound, and `FEASIBLE` otherwise (along with the optimality gap in the output report).
+
+#### Pre-solve Feasibility Checks
 
 Before handing the model to the solver, two lightweight checks emit warnings (and feed the infeasibility analysis if needed):
 
 - **Job-level check** — if a job's deadline is less than the sum of its own processing times it can never be met regardless of scheduling order.
 - **Machine-level EDF check** — for each machine and each deadline value `d`, the total processing time of all jobs with `deadline <= d` that use that machine must not exceed `d`. This catches contention-induced infeasibility that the job-level check misses.
 
-### Objective
+---
 
-| Mode | Objective |
-|------|-----------|
-| No priorities set | Minimize `makespan` — the finish time of the last operation across all jobs |
-| Any job has a priority | Minimize `Σ priority(job) × end[last_op]` — weighted sum of completion times; higher-priority jobs are penalised more for finishing late |
+### 4.3 Infeasibility Analysis
 
-The solver runs with a 30-second wall-clock limit and a single worker (`num_workers = 1`). It reports `OPTIMAL` when the objective value equals the best bound, and `FEASIBLE` otherwise (along with the optimality gap in the output report).
+When the CP-SAT solver returns no solution, the agent triggers a diagnostic pass implemented in `scheduler_infeasibility_analysis.py` via the `InfeasibilityAnalysisMixin` class.
+
+**Technique** — The diagnostic re-solves a copy of the model with no objective, guarding each deadline with an *assumption literal* (a boolean variable the solver can flip). After the solve, `sufficient_assumptions_for_infeasibility()` returns a minimal conflicting subset of those literals — i.e. the smallest group of deadlines that provably cannot all be met simultaneously.
+
+**Why deadlines, not precedence/no-overlap?** Precedence and machine no-overlap constraints can always be satisfied by serialising all tasks within the planning horizon — they can never alone cause infeasibility. Deadlines are therefore the only constraint family the diagnostic needs to investigate.
+
+**Possible verdicts:**
+
+| Verdict | Meaning |
+|---------|---------|
+| `infeasible` | Deadlines are the confirmed cause; the conflicting set is shown |
+| `deadlines_ok` | Deadlines are jointly satisfiable — the original failure was likely a solver timeout, not true infeasibility |
+| `inconclusive` | The diagnostic itself timed out (30 s limit); increase `max_time_in_seconds` or `num_workers` |
+| `no_deadlines` | Infeasibility with no deadline constraints present is unexpected; indicates malformed input data (e.g. zero or negative processing times) |
 
 ---
 
-## Assumptions
+### 4.4 Code
 
-- **Time is unitless.** Processing times and deadlines are integers in whatever unit the user defines (minutes, hours, etc.).
-- **Operations are strictly ordered** within a job; a job's next operation cannot start before the previous one finishes.
-- **Each machine handles one operation at a time** (no parallel machines).
-- **Offline machines drop their jobs.** Any job that requires an offline machine is excluded from the current solve rather than queued.
-- **Priorities are additive weights**, not hard ordering constraints. A higher priority number causes the solver to minimize that job's weighted completion time more aggressively.
-- **Deadlines are hard constraints.** If a deadline makes the problem infeasible, the solver returns no solution. The agent will explain why.
-- **The scheduler runs once per user turn.** A guard flag prevents re-running without explicit user confirmation.
+The scheduling logic lives in two files:
+
+- **`scheduler.py`** — builds the CP-SAT model, applies constraints and the objective, invokes the solver, and writes a timestamped human-readable report to `outputs/`.
+- **`scheduler_infeasibility_analysis.py`** — contains `InfeasibilityAnalysisMixin`, mixed into the scheduler class to add the assumption-literal diagnostic when the solver returns no solution.
+
+**Tests** live in [tests/test_scheduler.py](tests/test_scheduler.py) and run against small, hand-crafted scenarios defined in [tests/test_jobs.json](tests/test_jobs.json). Each test targets exactly one property of the CP-SAT model. Scenarios are kept small enough that the correct answer can be verified by hand, making failures easy to diagnose.
+
+| ID | Test | What it checks |
+|----|------|---------------|
+| H1 | `test_no_machine_overlap` | No two operations assigned to the same machine overlap in time. All three jobs visit machine 0, creating forced contention. |
+| H2 | `test_no_preemption` | Every operation's scheduled duration equals its declared `processing_time` — the solver never splits or shortens a task. |
+| H3 | `test_operation_precedence` | Within each job, every operation starts only after the preceding one finishes. Jobs visit machines in different orders so the check crosses machine boundaries. |
+| S1 | `test_makespan_minimisation` | The solver finds the provably optimal makespan. A 2-job, 2-machine instance is used where the optimal (makespan = 5) can be confirmed by hand. |
+| D1 | `test_deadline_respected` | Jobs with a deadline have their last operation finish at or before that deadline. |
+| C1 | `test_machine_capacity` | Each machine processes at most one job at a time under maximum contention. Four jobs all routed through a single machine; the only valid makespan equals total work (10), confirming full serialisation and pairwise non-overlap. |
+
+Test fixture data is stored as named keys in `tests/test_jobs.json`, keeping scenarios separate from assertion logic and making it easy to add new cases without touching test code.
 
 ---
 
-## Agent design
+## 5. On the JSSP Agent
+
+### 5.1 Agent Design
+
+The agent is a **LangGraph ReAct agent** — it loops between thinking and acting until it produces a plain-text reply.
 
 **Graph structure** — Two nodes (`agent` → `tools`) connected by a conditional edge. After every LLM response, `tools_condition` checks whether the model emitted tool calls; if so it routes to `ToolNode`, which executes all calls and returns results. Control then returns to `agent`, repeating until the model produces a plain-text reply.
 
@@ -129,8 +193,7 @@ The solver runs with a 30-second wall-clock limit and a single worker (`num_work
 | `handle_deadline` | Sets or removes the hard deadline on a job |
 | `get_latest_scheduler_report` | Re-fetches the most recent report without re-solving |
 
-
-**Scheduler re-run guard** — A module-level `_scheduler_called` flag is reset to `False` on each new human message and set to `True` the first time `run_scheduler` fires. If the tool is called a second time in the same turn it returns an early-exit string instead of solving again. This prevents the solver from running redundantly during multi-step tool chains.
+**Scheduler re-run guard** — A module-level `_scheduler_called` flag is reset to `False` on each new human message and set to `True` the first time `run_scheduler` fires. If the tool is called a second time in the same turn it returns an early-exit string instead of solving again, preventing redundant solves during multi-step tool chains.
 
 **What-if exception** — The system prompt explicitly allows the agent to chain `update_*` + `run_scheduler` in a single turn when the user frames the request as a hypothetical ("what if machine 2 goes offline?"). In all other cases the agent asks for confirmation before re-solving.
 
@@ -138,58 +201,68 @@ The solver runs with a 30-second wall-clock limit and a single worker (`num_work
 
 ---
 
-## Infeasibility analysis
+### 5.2 Agent Code
 
-When the CP-SAT solver returns no solution, the agent triggers a diagnostic pass implemented in `scheduler_infeasibility_analysis.py` via the `InfeasibilityAnalysisMixin` class.
-
-**Technique** — The diagnostic re-solves a copy of the model with no objective, guarding each deadline with an *assumption literal* (a boolean variable the solver can flip). After the solve, `sufficient_assumptions_for_infeasibility()` returns a minimal conflicting subset of those literals — i.e. the smallest group of deadlines that provably cannot all be met at the same time. (Method from google/or-tools#973.)
-
-**Why deadlines, not precedence/no-overlap?** Precedence and machine no-overlap constraints can always be satisfied by serialising all tasks within the planning horizon — they can never alone cause infeasibility. Deadlines are therefore the only constraint family the diagnostic needs to investigate.
-
-**Possible verdicts**
-
-- `infeasible` — deadlines are the confirmed cause; the conflicting set is shown.
-- `deadlines_ok` — deadlines are jointly satisfiable, meaning the original failure was likely a solver timeout rather than true infeasibility.
-- `inconclusive` — the diagnostic itself timed out (30 s limit); increase `max_time_in_seconds` or `num_workers`.
-- `no_deadlines` — infeasibility with no deadline constraints present is unexpected; indicates malformed input data (e.g. zero or negative processing times).
+- **`agent.py`** — defines the five tools, builds the LangGraph graph, sets up the Langfuse callback, and runs the agent loop. Can be run directly as a CLI (`uv run python agent.py`).
+- **`ui.py`** — Streamlit chat UI. Wraps the same agent graph with a browser interface and adds a sidebar that reads `data/jobs.json` on every refresh to show live machine statuses and job details.
 
 ---
 
-## Tests
+## 6. Set Up & Execution
 
-Tests live in [tests/test_scheduler.py](tests/test_scheduler.py) and run against small, hand-crafted scenarios defined in [tests/test_jobs.json](tests/test_jobs.json).
+### 6.1 Prerequisites
 
-**Run the suite:**
+- **Python 3.12+**
+- **uv** — fast Python package manager. Install via the [official guide](https://docs.astral.sh/uv/getting-started/installation/).
+
+### 6.2 Set Up
+
+**Clone the repository:**
+
+```bash
+git clone <repo-url>
+cd JSSP
+```
+
+**Install dependencies:**
+
+```bash
+uv sync
+```
+
+**Create a `.env` file** in the project root with the following keys:
+
+```
+GROQ_API_KEY=...
+LANGFUSE_PUBLIC_KEY=...
+LANGFUSE_SECRET_KEY=...
+LANGFUSE_HOST=...        # e.g. https://cloud.langfuse.com
+```
+
+> Langfuse keys are optional — if absent, tracing silently no-ops. `GROQ_API_KEY` is required to run the agent.
+
+---
+
+**Run the Streamlit UI:**
+
+```bash
+uv run streamlit run ui.py
+```
+
+**Run the agent as a CLI:**
+
+```bash
+uv run python agent.py
+```
+
+**Run the scheduler directly (no agent):**
+
+```bash
+uv run python scheduler.py
+```
+
+**Run the test suite:**
 
 ```bash
 uv run pytest tests/
 ```
-
-Each test targets exactly one property of the CP-SAT model. Scenarios are kept small enough that the correct answer can be verified by hand, making failures easy to diagnose.
-
-| ID | Test | What it checks |
-|----|------|---------------|
-| H1 | `test_no_machine_overlap` | No two operations assigned to the same machine overlap in time. All three jobs visit machine 0, creating forced contention. |
-| H2 | `test_no_preemption` | Every operation's scheduled duration equals its declared `processing_time` — the solver never splits or shortens a task. |
-| H3 | `test_operation_precedence` | Within each job, every operation starts only after the preceding one finishes. Jobs visit machines in different orders so the check crosses machine boundaries. |
-| S1 | `test_makespan_minimisation` | The solver finds the provably optimal makespan. A 2-job, 2-machine instance is used where the optimal (makespan = 5) can be confirmed by hand. |
-| D1 | `test_deadline_respected` | Jobs with a deadline have their last operation finish at or before that deadline. |
-| E1 | `test_offline_machine_raises` | `JSSP.__init__` raises `ValueError` when every job requires an offline machine and no schedulable jobs remain. |
-
-**Test data** — All scenarios except E1 (which uses inline data) are stored as named keys in `tests/test_jobs.json`. This keeps fixture data separate from assertion logic and makes it easy to add new scenarios without touching test code.
-
----
-
-## Design decisions
-
-**Dual objective** — When priorities are present the model minimizes weighted completion time (priority × completion). Without priorities it minimizes makespan. This keeps the default experience simple while supporting advanced use cases.
-
-**Agent guards scheduler re-runs** — Calling the solver on every tool call would be expensive and confusing. The agent is instructed to ask before re-running after a configuration change, and a flag enforces this within a single turn.
-
-**Jobs data mutated on disk** — Persisting changes to `data/jobs.json` means the UI sidebar always reflects the current state without extra synchronization logic. The tradeoff is that changes are permanent until manually reverted.
-
-**Langfuse tracing** — Every session is tagged and traced via Langfuse for observability. The handler is instantiated at import time; if keys are missing the calls silently fail.
-
-**Minimal system prompt** — The agent runs on a small LLM (Groq-hosted Llama), so the system prompt is kept short and directive: it names the tools, states the re-run guard rule, and gives the what-if exception. Verbose prose or redundant examples would consume context that the model needs for reasoning and tend to cause instruction-following failures in smaller models.
-
-**Structured tool output** — Each tool returns a clearly formatted string (section headers, labelled fields) rather than raw JSON or unformatted text. This gives the LLM a predictable surface to cite in its reply and produces readable output in the Streamlit UI without additional post-processing.
