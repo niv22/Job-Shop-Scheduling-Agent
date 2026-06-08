@@ -3,6 +3,9 @@
 ## Contents
 
 1. [Project Description](#1-project-description)
+   - [1.1 What You can Do](#11-what-you-can-do)
+   - [1.2 Underlying Technology](#12-underlying-technology)
+   - [1.3 How AI was used in this project](#13-how-ai-was-used-in-this-project)
 2. [Assumptions](#2-assumptions)
 3. [Design Decisions](#3-design-decisions)
 4. [On Scheduling](#4-on-scheduling)
@@ -23,25 +26,29 @@
 
 This project is an AI-powered job-shop scheduling assistant. A project manager can interact with a CP-SAT scheduler entirely in plain language — asking it to run a schedule, take a machine offline, raise a job's priority, or set a deadline — without touching any configuration files directly. This has two main parts, the scheduler which solves the scheduling problem and the AI agent which allows the user to manage the scheduler.
 
-**What you can do:**
+### 1.1 What you can do
 - Run the scheduler and get a formatted report of the optimal (or best-found) schedule.
 - Toggle machines online or offline and immediately see how the schedule changes.
 - Assign numeric priorities to jobs so the solver penalises high-priority jobs for finishing late.
 - Set deadlines on jobs
 - Get a explanations on when the scheduling is not feasible
 
-**Underlying technology:**
+  <img width="1434" height="804" alt="image" src="https://github.com/user-attachments/assets/64d70026-792a-4380-940b-badf464c3d76" />
+
+
+### 1.2 Underlying technology
 - **Google OR-Tools CP-SAT** — For performing the scheduling of the jobs.
 - **LangGraph ReAct agent** — For AI agent graph orchestrating tool calls.
 - **Groq-hosted Llama** — Free hosted LLM.
 - **Streamlit** — browser-based chat UI.
 - **Langfuse** — end-to-end observability and tracing for every agent session.
 
-<img width="1434" height="804" alt="image" src="https://github.com/user-attachments/assets/64d70026-792a-4380-940b-badf464c3d76" />
 
 
----
-
+### 1.3 How AI was used in this project
+- Claude Code (Anthropic) was used as a development assistant.
+- The appproach for development was vibe-coding where the author (myself) and Claude Code created the codebase through continuous interactions.
+  
 ## 2. Assumptions
 
 - **Time is unitless.** Processing times and deadlines are integers in whatever unit the user defines (minutes, hours, etc.). Hence the unit is not considered here.
@@ -243,17 +250,15 @@ The agent is a **LangGraph ReAct agent** — it loops between thinking and actin
 ---
 
 ## 6. Set Up & Execution
+The code has been implemented and tested via VSCode terminal.
 
 ### 6.1 Prerequisites
 
 - **Python 3.12+**
 - **uv** — fast Python package manager. Makes it very easy to setup the project and dependencies.
 Install via the [official guide](https://docs.astral.sh/uv/getting-started/installation/).
-- **docker**
 - **Langfuse** can be self-hosted via docker or cloud-based via API keys can be used. 
 Refer https://langfuse.com/docs/observability/get-started
-
-
 
 ### 6.2 Set Up
 
@@ -266,13 +271,14 @@ cd JSSP
 
 **Install dependencies:**
 
+This will set up all dependencies and create the virtual env
+
 ```bash
 uv sync
+source .venv/bin/activate
 ```
 
 **Create a `.env` file** refer the .env.example
-
----
 
 **Run the Streamlit UI:**
 
@@ -297,3 +303,4 @@ uv run python scheduler.py
 ```bash
 uv run pytest tests/
 ```
+
