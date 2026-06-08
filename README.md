@@ -6,8 +6,7 @@
    - [1.1 What You can Do](#11-what-you-can-do)
    - [1.2 Tech Stack](#12-tech-stack)
    - [1.3 Architecture](#13-architecture)
-   - [1.4 User Interaction Flow](#14-user-interaction-flow)
-   - [1.5 How AI was used in this project](#15-how-ai-was-used-in-this-project)
+   - [1.4 How AI was used in this project](#14-how-ai-was-used-in-this-project)
 2. [Assumptions](#2-assumptions)
 3. [Design Decisions](#3-design-decisions)
 4. [On Scheduling](#4-on-scheduling)
@@ -109,42 +108,7 @@ A production manager needs to reconfigure this schedule dynamically — taking m
 
 ---
 
-### 1.4 User Interaction Flow
-
-Below is a typical multi-step interaction — the user asks to take a machine offline and reschedule:
-
-```
-User: "Take machine 2 offline and run the schedule"
-  │
-  ▼
-Streamlit UI / CLI  ──────────────────► LangGraph Agent
-                                               │
-                          ┌────────────────────┤
-                          │                    │
-                          ▼                    ▼
-                    Groq/Llama LLM     decides tool calls
-                          │
-                  ┌───────┴───────────────────────────┐
-                  │  Step 1: update_machine_status(2)  │
-                  │    └─► writes jobs.json            │
-                  │                                    │
-                  │  Step 2: run_scheduler()           │
-                  │    └─► CP-SAT solves               │
-                  │    └─► returns schedule report     │
-                  └───────────────────────────────────┘
-                          │
-                          ▼
-                  LLM formats plain-text reply
-                          │
-                          ▼
-             User sees response + updated sidebar
-```
-
-If the solver finds no solution, `InfeasibilityAnalysisMixin` runs a diagnostic pass and the agent explains which deadlines conflict.
-
----
-
-### 1.5 How AI was used in this project
+### 1.4 How AI was used in this project
 - Claude Code (Anthropic) was used as a development assistant.
 - The appproach for development was vibe-coding where the author (myself) and Claude Code created the codebase through continuous interactions.
   
