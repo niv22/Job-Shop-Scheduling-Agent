@@ -4,8 +4,10 @@
 
 1. [Project Description](#1-project-description)
    - [1.1 What You can Do](#11-what-you-can-do)
-   - [1.2 Underlying Technology](#12-underlying-technology)
-   - [1.3 How AI was used in this project](#13-how-ai-was-used-in-this-project)
+   - [1.2 Tech Stack](#12-tech-stack)
+   - [1.3 Architecture](#13-architecture)
+   - [1.4 User Interaction Flow](#14-user-interaction-flow)
+   - [1.5 How AI was used in this project](#15-how-ai-was-used-in-this-project)
 2. [Assumptions](#2-assumptions)
 3. [Design Decisions](#3-design-decisions)
 4. [On Scheduling](#4-on-scheduling)
@@ -24,28 +26,125 @@
 
 ## 1. Project Description
 
-This project is an AI-powered job-shop scheduling assistant. A project manager can interact with a CP-SAT scheduler entirely in plain language — asking it to run a schedule, take a machine offline, raise a job's priority, or set a deadline — without touching any configuration files directly. This has two main parts, the scheduler which solves the scheduling problem and the AI agent which allows the user to manage the scheduler.
+### The Problem
 
-### 1.1 What you can do
+On a manufacturing floor, a set of machines must process a batch of jobs. Each job is a sequence of operations, each requiring a specific machine for a fixed duration. The goal is to schedule all jobs to **minimise the total completion time (makespan)** while respecting two hard constraints:
+- **No overlap** — a machine can process only one job at a time.
+- **No preemption** — once an operation starts, it runs to completion.
+
+A production manager needs to reconfigure this schedule dynamically — taking machines offline, reprioritising jobs, setting deadlines — without touching config files or re-running code manually.
+
+### What this project builds
+
+**Part A — Optimization engine (`scheduler.py`):** A CP-SAT solver that takes jobs, machines, and constraints as input and produces an optimal (or best-found) schedule. Handles hard constraints (no overlap, no preemption), optional priorities, and optional hard deadlines.
+
+**Part B — LLM agent (`agent.py`, `ui.py`):** A LangGraph ReAct agent wrapping the scheduler. A manager types plain English; the agent calls the right tool, mutates the data, re-runs the solver if needed, and returns a readable result.
+
+**Bonus — Infeasibility explanation:** When the solver finds no valid schedule, a diagnostic pass identifies the conflicting deadlines and the agent explains the conflict in plain English with suggested fixes.
+
+### 1.1 What you can do 
 - Run the scheduler and get a formatted report of the optimal (or best-found) schedule.
 - Toggle machines online or offline and immediately see how the schedule changes.
 - Assign numeric priorities to jobs so the solver penalises high-priority jobs for finishing late.
-- Set deadlines on jobs
-- Get a explanations on when the scheduling is not feasible
+- Set deadlines on jobs.
+- Get plain-English explanations when scheduling is not feasible.
 
   <img width="1434" height="804" alt="image" src="https://github.com/user-attachments/assets/64d70026-792a-4380-940b-badf464c3d76" />
 
 
-### 1.2 Underlying technology
-- **Google OR-Tools CP-SAT** — For performing the scheduling of the jobs.
-- **LangGraph ReAct agent** — For AI agent graph orchestrating tool calls.
-- **Groq-hosted Llama** — Free hosted LLM.
-- **Streamlit** — browser-based chat UI.
-- **Langfuse** — end-to-end observability and tracing for every agent session.
+### 1.2 Tech Stack
 
+| Technology | Role | Why |
+|------------|------|-----|
+| **Google OR-Tools CP-SAT** | Scheduler | Industry-standard constraint solver; handles no-overlap, precedence, and deadline constraints natively with optimality guarantees |
+| **LangGraph ReAct** | Agent framework | Clean graph abstraction for think→act loops |
+| **Groq-hosted Llama** | LLM | Free tier, low latency; sufficient for intent parsing and tool routing. Predictable tasks are offloaded to deterministic code rather than the LLM |
+| **Streamlit** | UI | Rapid chat UI with minimal frontend code; sidebar reads live state from `jobs.json` on every refresh |
+| **Langfuse** | Observability | Open-source LLM tracing; self-hostable, integrates via a LangChain callback with no code changes needed |
 
+---
 
-### 1.3 How AI was used in this project
+### 1.3 Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                     Interfaces                       │
+│   ┌─────────────────┐       ┌──────────────────┐    │
+│   │  Streamlit UI   │       │  CLI (agent.py)  │    │
+│   │    (ui.py)      │       │                  │    │
+│   └────────┬────────┘       └────────┬─────────┘    │
+└────────────┼────────────────────────┼───────────────┘
+             └──────────┬─────────────┘
+                        ▼
+┌───────────────────────────────────────────────────────┐
+│                LangGraph ReAct Agent                   │
+│   ┌───────────────────┐    ┌──────────────────────┐   │
+│   │   Groq / Llama    │◄──►│  Tools               │   │
+│   │   LLM             │    │  run_scheduler        │   │
+│   └───────────────────┘    │  update_machine_status│   │
+│                            │  handle_priority      │   │
+│                            │  handle_deadline      │   │
+│                            │  get_latest_report    │   │
+│                            └──────────┬────────────┘   │
+└───────────────────────────────────────┼───────────────┘
+                                        ▼
+┌───────────────────────────────────────────────────────┐
+│                      Scheduler                         │
+│   ┌───────────────────┐    ┌────────────────────────┐ │
+│   │  CP-SAT Solver    │    │  Infeasibility Analysis │ │
+│   │  (scheduler.py)   │    │  (assumption literals)  │ │
+│   └───────────────────┘    └────────────────────────┘ │
+└─────────────────────────────┬─────────────────────────┘
+                              ▼
+                   ┌──────────────────────┐
+                   │   data/jobs.json     │
+                   │   (single source     │
+                   │    of truth)         │
+                   └──────────────────────┘
+
+  ┌───────────────────────────────────────┐
+  │  Langfuse  (tracing & observability)  │
+  └───────────────────────────────────────┘
+```
+
+---
+
+### 1.4 User Interaction Flow
+
+Below is a typical multi-step interaction — the user asks to take a machine offline and reschedule:
+
+```
+User: "Take machine 2 offline and run the schedule"
+  │
+  ▼
+Streamlit UI / CLI  ──────────────────► LangGraph Agent
+                                               │
+                          ┌────────────────────┤
+                          │                    │
+                          ▼                    ▼
+                    Groq/Llama LLM     decides tool calls
+                          │
+                  ┌───────┴───────────────────────────┐
+                  │  Step 1: update_machine_status(2)  │
+                  │    └─► writes jobs.json            │
+                  │                                    │
+                  │  Step 2: run_scheduler()           │
+                  │    └─► CP-SAT solves               │
+                  │    └─► returns schedule report     │
+                  └───────────────────────────────────┘
+                          │
+                          ▼
+                  LLM formats plain-text reply
+                          │
+                          ▼
+             User sees response + updated sidebar
+```
+
+If the solver finds no solution, `InfeasibilityAnalysisMixin` runs a diagnostic pass and the agent explains which deadlines conflict.
+
+---
+
+### 1.5 How AI was used in this project
 - Claude Code (Anthropic) was used as a development assistant.
 - The appproach for development was vibe-coding where the author (myself) and Claude Code created the codebase through continuous interactions.
   
