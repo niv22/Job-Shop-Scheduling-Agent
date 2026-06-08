@@ -85,5 +85,58 @@
                 ]
             }
         ]
+    },
+    "test_operation_precedence": {
+        "jobs": [
+            {
+                "id": 0,
+                "name": "Job0",
+                "operations": [
+                    {"machine_id": 0, "processing_time": 2},
+                    {"machine_id": 1, "processing_time": 3},
+                    {"machine_id": 2, "processing_time": 1}
+                ]
+            },
+            {
+                "id": 1,
+                "name": "Job1",
+                "operations": [
+                    {"machine_id": 1, "processing_time": 1},
+                    {"machine_id": 2, "processing_time": 2},
+                    {"machine_id": 0, "processing_time": 3}
+                ]
+            },
+            {
+                "id": 2,
+                "name": "Job2",
+                "operations": [
+                    {"machine_id": 2, "processing_time": 2},
+                    {"machine_id": 0, "processing_time": 1},
+                    {"machine_id": 1, "processing_time": 2}
+                ]
+            }
+        ]
+    },
+    "test_deadline_respected": {
+        "jobs": [
+            {
+                "id": 0,
+                "name": "Job0",
+                "deadline": 10,
+                "operations": [
+                    {"machine_id": 0, "processing_time": 2},
+                    {"machine_id": 1, "processing_time": 3}
+                ]
+            },
+            {
+                "id": 1,
+                "name": "Job1",
+                "deadline": 10,
+                "operations": [
+                    {"machine_id": 1, "processing_time": 1},
+                    {"machine_id": 0, "processing_time": 2}
+                ]
+            }
+        ]
     }
 }

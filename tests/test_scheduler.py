@@ -1,15 +1,24 @@
 import sys
 import os
 import json
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ortools.sat.python import cp_model
 from scheduler import JSSP
-
 
 
 def _load(scenario):
     with open("tests/test_jobs.json") as f:
         return json.load(f)[scenario]
+
+
+def _solve(jobs_data):
+    """Return (obj, solver, machine_to_tasks) for constraint-level tests."""
+    obj = JSSP(jobs_data)
+    solver, status = obj.solve()
+    assert status in (cp_model.OPTIMAL, cp_model.FEASIBLE), "Solver returned no solution"
+    return obj, solver, obj.get_machine_to_tasks(solver)
 
 
 def test_no_machine_overlap():
@@ -20,10 +29,7 @@ def test_no_machine_overlap():
     Job1: M2(4) -> M0(2) -> M1(1)
     Job2: M1(3) -> M2(2) -> M0(2)
     """
-    obj = JSSP(_load("test_no_machine_overlap"))
-    machine_to_tasks = obj.run()
-    del obj  # Free memory from the potentially large CP model
-    assert machine_to_tasks, "Solver returned no solution"
+    _, _, machine_to_tasks = _solve(_load("test_no_machine_overlap"))
 
     for machine, tasks in machine_to_tasks.items():
         intervals = [(t["start"], t["start"] + t["duration"], t["label"]) for t in tasks]
@@ -44,8 +50,7 @@ def test_no_preemption():
     Job3: M1(3) -> M0(2)
     """
     jobs_data = _load("test_no_preemption")
-    machine_to_tasks = JSSP(jobs_data).run()
-    assert machine_to_tasks, "Solver returned no solution"
+    _, _, machine_to_tasks = _solve(jobs_data)
 
     declared = {
         f"{job['name']} Op{task_id}": op["processing_time"]
@@ -71,8 +76,7 @@ def test_makespan_minimisation():
       M0: Job0Op0 [0,2]  Job1Op1 [2,3]
       M1: Job1Op0 [0,2]  Job0Op1 [2,5]
     """
-    machine_to_tasks = JSSP(_load("test_makespan_minimisation")).run()
-    assert machine_to_tasks, "Solver returned no solution"
+    _, _, machine_to_tasks = _solve(_load("test_makespan_minimisation"))
 
     makespan = max(
         t["start"] + t["duration"]
@@ -80,3 +84,83 @@ def test_makespan_minimisation():
         for t in tasks
     )
     assert makespan == 5, f"Expected optimal makespan 5, got {makespan}"
+
+
+def test_operation_precedence():
+    """H3: Within each job, every operation starts only after the preceding one ends.
+
+    3 jobs, 3 machines — each job visits all three machines in a different order,
+    so the precedence chain must hold across machine-boundary crossings.
+    Job0: M0(2) -> M1(3) -> M2(1)
+    Job1: M1(1) -> M2(2) -> M0(3)
+    Job2: M2(2) -> M0(1) -> M1(2)
+    """
+    jobs_data = _load("test_operation_precedence")
+    _, _, machine_to_tasks = _solve(jobs_data)
+
+    # Reconstruct per-job op ordering from task labels ("JobX OpN")
+    job_ops: dict[str, list[tuple[int, int, int]]] = {}
+    for tasks in machine_to_tasks.values():
+        for t in tasks:
+            job_name, op_part = t["label"].rsplit(" Op", 1)
+            job_ops.setdefault(job_name, []).append(
+                (int(op_part), t["start"], t["duration"])
+            )
+
+    for job_name, ops in job_ops.items():
+        ops.sort()  # sort by op index
+        for i in range(len(ops) - 1):
+            op_idx, s, d = ops[i]
+            next_idx, s_next, _ = ops[i + 1]
+            assert s + d <= s_next, (
+                f"{job_name}: Op{op_idx} ends at {s + d} but Op{next_idx} starts at {s_next} "
+                f"(precedence violated)"
+            )
+
+
+def test_deadline_respected():
+    """D1: A job's last operation must finish at or before its declared deadline.
+
+    2 jobs, 2 machines, both with deadline=10.
+    Job0: M0(2) -> M1(3)   min completion = 5
+    Job1: M1(1) -> M0(2)   min completion = 3
+    Both deadlines are comfortably achievable; the solver must honour them.
+    """
+    jobs_data = _load("test_deadline_respected")
+    _, _, machine_to_tasks = _solve(jobs_data)
+
+    deadline_by_job = {j["name"]: j["deadline"] for j in jobs_data["jobs"] if "deadline" in j}
+
+    # Find the last-op finish time per job
+    last_finish: dict[str, int] = {}
+    for tasks in machine_to_tasks.values():
+        for t in tasks:
+            job_name = t["label"].rsplit(" Op", 1)[0]
+            finish = t["start"] + t["duration"]
+            if job_name not in last_finish or finish > last_finish[job_name]:
+                last_finish[job_name] = finish
+
+    for job_name, deadline in deadline_by_job.items():
+        finish = last_finish[job_name]
+        assert finish <= deadline, (
+            f"{job_name}: completed at {finish} which exceeds deadline {deadline}"
+        )
+
+
+def test_offline_machine_raises():
+    """E1: JSSP raises ValueError when every job requires an offline machine.
+
+    A single job uses machine 0, which is marked offline — no schedulable jobs remain.
+    """
+    jobs_data = {
+        "machines": [{"id": 0, "status": "offline"}],
+        "jobs": [
+            {
+                "id": 0,
+                "name": "Job0",
+                "operations": [{"machine_id": 0, "processing_time": 3}],
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="No schedulable jobs remain"):
+        JSSP(jobs_data)

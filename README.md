@@ -155,6 +155,31 @@ When the CP-SAT solver returns no solution, the agent triggers a diagnostic pass
 
 ---
 
+## Tests
+
+Tests live in [tests/test_scheduler.py](tests/test_scheduler.py) and run against small, hand-crafted scenarios defined in [tests/test_jobs.json](tests/test_jobs.json).
+
+**Run the suite:**
+
+```bash
+uv run pytest tests/
+```
+
+Each test targets exactly one property of the CP-SAT model. Scenarios are kept small enough that the correct answer can be verified by hand, making failures easy to diagnose.
+
+| ID | Test | What it checks |
+|----|------|---------------|
+| H1 | `test_no_machine_overlap` | No two operations assigned to the same machine overlap in time. All three jobs visit machine 0, creating forced contention. |
+| H2 | `test_no_preemption` | Every operation's scheduled duration equals its declared `processing_time` — the solver never splits or shortens a task. |
+| H3 | `test_operation_precedence` | Within each job, every operation starts only after the preceding one finishes. Jobs visit machines in different orders so the check crosses machine boundaries. |
+| S1 | `test_makespan_minimisation` | The solver finds the provably optimal makespan. A 2-job, 2-machine instance is used where the optimal (makespan = 5) can be confirmed by hand. |
+| D1 | `test_deadline_respected` | Jobs with a deadline have their last operation finish at or before that deadline. |
+| E1 | `test_offline_machine_raises` | `JSSP.__init__` raises `ValueError` when every job requires an offline machine and no schedulable jobs remain. |
+
+**Test data** — All scenarios except E1 (which uses inline data) are stored as named keys in `tests/test_jobs.json`. This keeps fixture data separate from assertion logic and makes it easy to add new scenarios without touching test code.
+
+---
+
 ## Design decisions
 
 **Dual objective** — When priorities are present the model minimizes weighted completion time (priority × completion). Without priorities it minimizes makespan. This keeps the default experience simple while supporting advanced use cases.
