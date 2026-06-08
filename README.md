@@ -21,73 +21,105 @@
 
 ## 1. Project Description
 
-This project is an AI-powered job-shop scheduling assistant. A project manager can interact with a CP-SAT scheduler entirely in plain language — asking it to run a schedule, take a machine offline, raise a job's priority, or set a deadline — without touching any configuration files directly.
+This project is an AI-powered job-shop scheduling assistant. A project manager can interact with a CP-SAT scheduler entirely in plain language — asking it to run a schedule, take a machine offline, raise a job's priority, or set a deadline — without touching any configuration files directly. This has two main parts, the scheduler which solves the scheduling problem and the AI agent which allows the user to manage the scheduler.
 
 **What you can do:**
 - Run the scheduler and get a formatted report of the optimal (or best-found) schedule.
 - Toggle machines online or offline and immediately see how the schedule changes.
 - Assign numeric priorities to jobs so the solver penalises high-priority jobs for finishing late.
-- Set hard deadlines on jobs and get a clear explanation when they make the problem infeasible.
-- Ask "what-if" questions ("what happens if machine 2 goes offline?") and have the agent update the data and re-solve in a single turn.
+- Set deadlines on jobs
+- Get a explanations on when the scheduling is not feasible
 
 **Underlying technology:**
-- **Google OR-Tools CP-SAT** — constraint-programming solver that finds optimal or near-optimal schedules.
-- **LangGraph ReAct agent** — orchestrates tool calls in a think → act → observe loop.
-- **Groq-hosted Llama** — the LLM powering the agent (fast inference, small context footprint).
-- **Streamlit** — browser-based chat UI with a live sidebar showing machine and job state.
+- **Google OR-Tools CP-SAT** — For performing the scheduling of the jobs.
+- **LangGraph ReAct agent** — For AI agent graph orchestrating tool calls.
+- **Groq-hosted Llama** — Free hosted LLM.
+- **Streamlit** — browser-based chat UI.
 - **Langfuse** — end-to-end observability and tracing for every agent session.
 
 ---
 
 ## 2. Assumptions
 
-- **Time is unitless.** Processing times and deadlines are integers in whatever unit the user defines (minutes, hours, etc.).
+- **Time is unitless.** Processing times and deadlines are integers in whatever unit the user defines (minutes, hours, etc.). Hence the unit is not considered here.
 - **Operations are strictly ordered** within a job; a job's next operation cannot start before the previous one finishes.
 - **Each machine handles one operation at a time** (no parallel machines).
-- **Offline machines drop their jobs.** Any job that requires an offline machine is excluded from the current solve rather than queued.
+- **Offline machines drop their jobs.** Any job that has atleast one task that requires an offline machine is excluded from the current solve.
 - **Priorities are additive weights**, not hard ordering constraints. A higher priority number causes the solver to minimise that job's weighted completion time more aggressively.
 - **Deadlines are hard constraints.** If a deadline makes the problem infeasible, the solver returns no solution. The agent will explain why.
-- **The scheduler runs once per user turn.** A guard flag prevents re-running without explicit user confirmation.
 
 ---
 
 ## 3. Design Decisions
 
-**Dual objective** — When priorities are present the model minimises weighted completion time (priority × completion). Without priorities it minimises makespan. This keeps the default experience simple while supporting advanced use cases.
+**Dual objective** — When priorities are present the model minimises weighted completion time (priority × completion). Without priorities it minimises makespan. 
 
-**Agent guards scheduler re-runs** — Calling the solver on every tool call would be expensive and confusing. The agent is instructed to ask before re-running after a configuration change, and a flag enforces this within a single turn.
-
-**Jobs data mutated on disk** — Persisting changes to `data/jobs.json` means the UI sidebar always reflects the current state without extra synchronisation logic. The tradeoff is that changes are permanent until manually reverted.
-
-**Minimal system prompt** — The agent runs on a small LLM (Groq-hosted Llama), so the system prompt is kept short and directive: it names the tools, states the re-run guard rule, and gives the what-if exception. Verbose prose or redundant examples consume context the model needs for reasoning and tend to cause instruction-following failures in smaller models.
+**Small LLM with Minimal system prompt and Agent harness** — The agent runs on a small LLM (Groq-hosted Llama), so the system prompt is kept short and directive, while deterministic actions like formatting, display of report with scheduler run are programmed.
+*Alternate approach* - using more capable LLMs will improve the agent drastically while it comes with a cost implication.
+However, the agent harness style of offloading predicatble tasks to non-LLM based functions improves over all efficiency and determinism of the system.
 
 **Structured tool output** — Each tool returns a clearly formatted string (section headers, labelled fields) rather than raw JSON or unformatted text. This gives the LLM a predictable surface to cite in its reply and produces readable output in the Streamlit UI without additional post-processing.
 
+**Infeasibility analysis grounded in determinstic evaluation** - Since the agent runs a small LLM, the reasoning capabilities are limited. Hence solver infeasibility is first examined thoroughly via programming and then the report is sent to the agent for further insights. Refer #43-infeasibility-analysis for how this is done. Also, having this agent harness-style approach to infeasibility analysis provides more reliable outcomes.
+*Alternate approach* - If using more capable LLMs, the LLM may be able to evaluate based on detailed logs and input data without needing this additional analysis. It may also suggest better fixes for handiling the infeasibility scenario.
+
 **Langfuse tracing** — Every session is tagged and traced via Langfuse for observability. The handler is instantiated at import time; if keys are missing the calls silently fail.
+
+**Agent guards scheduler re-runs** — A guard flag prevents re-running without explicit user confirmation. This is for handling the limitation of the small Language model's reasoning and tool call ability.
+
+**Jobs data mutated on disk** — Persisting changes to `data/jobs.json` means the UI sidebar always reflects the current state without extra synchronisation logic. The tradeoff is that changes are permanent until manually reverted.
 
 ---
 
 ## 4. On Scheduling
 
 ### 4.1 On Data
-
-The scheduler reads from `data/jobs.json`, which is the single source of truth for all scheduling inputs. It contains:
-
-- **Jobs** — each job has an ordered list of operations, a machine assignment per operation, and a processing time per operation.
-- **Machine statuses** — each machine is either `online` or `offline`. Offline machines cause any job requiring them to be dropped from the current solve.
-- **Priorities** — optional integer weights. When set, the solver switches from makespan minimisation to weighted completion time minimisation.
-- **Deadlines** — optional hard upper bounds on when a job's last operation must finish.
-
-The bundled dataset is a synthetic set of 10 jobs across 5 machines (IDs 0–4), randomly structured to exercise a range of scheduling scenarios — varying operation counts (3–5 ops per job), different machine orderings per job, and a mix of machine statuses. Job 0 is pre-configured with a priority and a tight deadline to demonstrate those features out of the box.
-
+The scheduler reads from `data/jobs.json`, which is the single source of truth for all scheduling inputs. 
+The bundled dataset is a synthetic set of 10 jobs across 5 machines (IDs 0–4), randomly structured to exercise a range of scheduling scenarios — varying operation counts (3–5 ops per job), different machine orderings per job, and a mix of machine statuses. 
 The agent modifies `data/jobs.json` in place when you ask it to change machine status, priorities, or deadlines.
+The jobs.json contains the following fields:
+```
+{
+      "id": 3, # job identifier
+      "name": "Job3", # job name, currently on the lines of Job0, Job1 etc
+      "deadline": 10, # optional, mentioned in time units
+      "priority" : 2, # optional, higher the number -> more priority
+      "operations": [  # list of tasks to be performed on different machines
+        {
+          "machine_id": 0, # the machine id where the tasks neeeds to be run
+          "processing_time": 2 # in time units
+        },
+        {
+          "machine_id": 2,
+          "processing_time": 3
+        },
+        {
+          "machine_id": 3,
+          "processing_time": 4
+        },
+      ]
+    }
+```
+
+the data.json also contains machine statuses
+```
+  "machines": [
+    {
+      "id": 0,
+      "status": "online" 
+    },
+    {
+      "id": 1,
+      "status": "offline" # if a job has a task for this machine, that job will be dropped for scheduling
+    },
+  ],
+```
 
 ---
 
 ### 4.2 The CP-SAT Solver
 
-The scheduler is built on [Google OR-Tools CP-SAT](https://developers.google.com/optimization/reference/python/sat/python/cp_model), a constraint-programming solver over integer variables.
-
+The scheduler is built on [Google OR-Tools CP-SAT](https://developers.google.com/optimization/reference/python/sat/python/cp_model)
 #### Variables
 
 For every `(job, operation)` pair the model creates three variables:
@@ -120,13 +152,15 @@ The solver runs with a 30-second wall-clock limit and a single worker (`num_work
 Before handing the model to the solver, two lightweight checks emit warnings (and feed the infeasibility analysis if needed):
 
 - **Job-level check** — if a job's deadline is less than the sum of its own processing times it can never be met regardless of scheduling order.
-- **Machine-level EDF check** — for each machine and each deadline value `d`, the total processing time of all jobs with `deadline <= d` that use that machine must not exceed `d`. This catches contention-induced infeasibility that the job-level check misses.
+- **Machine-level Earliest Deadline First check** — for each machine and each deadline value `d`, the total processing time of all jobs with `deadline <= d` that use that machine must not exceed `d`. This catches infeasibility that the previous job-level check is likely to miss.
 
 ---
 
 ### 4.3 Infeasibility Analysis
 
 When the CP-SAT solver returns no solution, the agent triggers a diagnostic pass implemented in `scheduler_infeasibility_analysis.py` via the `InfeasibilityAnalysisMixin` class.
+The idea for approaching the infeasibility analysis this way was got from this thread - https://github.com/google/or-tools/issues/973
+
 
 **Technique** — The diagnostic re-solves a copy of the model with no objective, guarding each deadline with an *assumption literal* (a boolean variable the solver can flip). After the solve, `sufficient_assumptions_for_infeasibility()` returns a minimal conflicting subset of those literals — i.e. the smallest group of deadlines that provably cannot all be met simultaneously.
 
@@ -150,18 +184,18 @@ The scheduling logic lives in two files:
 - **`scheduler.py`** — builds the CP-SAT model, applies constraints and the objective, invokes the solver, and writes a timestamped human-readable report to `outputs/`.
 - **`scheduler_infeasibility_analysis.py`** — contains `InfeasibilityAnalysisMixin`, mixed into the scheduler class to add the assumption-literal diagnostic when the solver returns no solution.
 
-**Tests** live in [tests/test_scheduler.py](tests/test_scheduler.py) and run against small, hand-crafted scenarios defined in [tests/test_jobs.json](tests/test_jobs.json). Each test targets exactly one property of the CP-SAT model. Scenarios are kept small enough that the correct answer can be verified by hand, making failures easy to diagnose.
+**Tests** live in [tests/test_scheduler.py](tests/test_scheduler.py) and run against small, hand-crafted scenarios defined in [tests/test_jobs.json](tests/test_jobs.json). 
 
-| ID | Test | What it checks |
-|----|------|---------------|
-| H1 | `test_no_machine_overlap` | No two operations assigned to the same machine overlap in time. All three jobs visit machine 0, creating forced contention. |
-| H2 | `test_no_preemption` | Every operation's scheduled duration equals its declared `processing_time` — the solver never splits or shortens a task. |
-| H3 | `test_operation_precedence` | Within each job, every operation starts only after the preceding one finishes. Jobs visit machines in different orders so the check crosses machine boundaries. |
-| S1 | `test_makespan_minimisation` | The solver finds the provably optimal makespan. A 2-job, 2-machine instance is used where the optimal (makespan = 5) can be confirmed by hand. |
-| D1 | `test_deadline_respected` | Jobs with a deadline have their last operation finish at or before that deadline. |
-| C1 | `test_machine_capacity` | Each machine processes at most one job at a time under maximum contention. Four jobs all routed through a single machine; the only valid makespan equals total work (10), confirming full serialisation and pairwise non-overlap. |
+| Test | What it checks |
+|------|---------------|
+| `test_no_machine_overlap` | No two operations assigned to the same machine overlap in time. All three jobs visit machine 0, creating forced contention. |
+| `test_no_preemption` | Every operation's scheduled duration equals its declared `processing_time` — the solver never splits or shortens a task. |
+| `test_operation_precedence` | Within each job, every operation starts only after the preceding one finishes. Jobs visit machines in different orders so the check crosses machine boundaries. |
+| `test_makespan_minimisation` | The solver finds the provably optimal makespan. A 2-job, 2-machine instance is used where the optimal (makespan = 5) can be confirmed by hand. |
+| `test_deadline_respected` | Jobs with a deadline have their last operation finish at or before that deadline. |
+| `test_machine_capacity` | Each machine processes at most one job at a time under maximum contention. Four jobs all routed through a single machine; the only valid makespan equals total work (10), confirming full serialisation and pairwise non-overlap. |
 
-Test fixture data is stored as named keys in `tests/test_jobs.json`, keeping scenarios separate from assertion logic and making it easy to add new cases without touching test code.
+Test fixture data is stored as named keys in `tests/test_jobs.json`.
 
 ---
 
@@ -183,7 +217,6 @@ The agent is a **LangGraph ReAct agent** — it loops between thinking and actin
      (plain text response → user)
 ```
 
-**Tools** — Five LangChain `@tool` functions, each with a focused scope:
 
 | Tool | What it does |
 |------|-------------|
@@ -194,8 +227,6 @@ The agent is a **LangGraph ReAct agent** — it loops between thinking and actin
 | `get_latest_scheduler_report` | Re-fetches the most recent report without re-solving |
 
 **Scheduler re-run guard** — A module-level `_scheduler_called` flag is reset to `False` on each new human message and set to `True` the first time `run_scheduler` fires. If the tool is called a second time in the same turn it returns an early-exit string instead of solving again, preventing redundant solves during multi-step tool chains.
-
-**What-if exception** — The system prompt explicitly allows the agent to chain `update_*` + `run_scheduler` in a single turn when the user frames the request as a hypothetical ("what if machine 2 goes offline?"). In all other cases the agent asks for confirmation before re-solving.
 
 **Observability** — Every session gets a UUID and is traced end-to-end via Langfuse, tagged `jssp` and `cli` (or `streamlit` from the UI). If the Langfuse keys are absent the callback silently no-ops.
 
@@ -213,14 +244,20 @@ The agent is a **LangGraph ReAct agent** — it loops between thinking and actin
 ### 6.1 Prerequisites
 
 - **Python 3.12+**
-- **uv** — fast Python package manager. Install via the [official guide](https://docs.astral.sh/uv/getting-started/installation/).
+- **uv** — fast Python package manager. Makes it very easy to setup the project and dependencies.
+Install via the [official guide](https://docs.astral.sh/uv/getting-started/installation/).
+- **docker**
+- **Langfuse** can be self-hosted via docker or cloud-based via API keys can be used. 
+Refer https://langfuse.com/docs/observability/get-started
+
+
 
 ### 6.2 Set Up
 
 **Clone the repository:**
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/niv22/Job-Shop-Scheduling-Agent/
 cd JSSP
 ```
 
@@ -230,16 +267,7 @@ cd JSSP
 uv sync
 ```
 
-**Create a `.env` file** in the project root with the following keys:
-
-```
-GROQ_API_KEY=...
-LANGFUSE_PUBLIC_KEY=...
-LANGFUSE_SECRET_KEY=...
-LANGFUSE_HOST=...        # e.g. https://cloud.langfuse.com
-```
-
-> Langfuse keys are optional — if absent, tracing silently no-ops. `GROQ_API_KEY` is required to run the agent.
+**Create a `.env` file** refer the .env.example
 
 ---
 
